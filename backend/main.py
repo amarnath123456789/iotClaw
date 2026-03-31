@@ -2,7 +2,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Any
-import anthropic, os, uuid, json, sqlite3
+import google.generativeai as genai
+import os, uuid, json, sqlite3
 from datetime import datetime
 import sys
 sys.path.insert(0, os.path.dirname(__file__))
@@ -13,7 +14,8 @@ app = FastAPI(title="OpenClaw Backend")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"],
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
 
 # ── DB ────────────────────────────────────────────────────────────────────────
 DB_PATH = os.path.join(os.path.dirname(__file__), "openclaw.db")
@@ -117,10 +119,21 @@ def root(): return {"status": "OpenClaw running", "sim": "active"}
 def chat(req: ChatRequest):
     if req.mode not in SYSTEM_PROMPTS:
         raise HTTPException(400, "Invalid mode")
-    messages = [{"role": m.role, "content": m.content} for m in req.messages]
-    resp = client.messages.create(model="claude-sonnet-4-20250514", max_tokens=1024,
-        system=SYSTEM_PROMPTS[req.mode], messages=messages)
-    reply = resp.content[0].text
+    if not os.environ.get("GEMINI_API_KEY"):
+        raise HTTPException(500, "GEMINI_API_KEY is not configured")
+
+    model = genai.GenerativeModel(
+        model_name=GEMINI_MODEL,
+        system_instruction=SYSTEM_PROMPTS[req.mode],
+    )
+
+    contents = []
+    for m in req.messages:
+        role = "model" if m.role == "assistant" else "user"
+        contents.append({"role": role, "parts": [{"text": m.content}]})
+
+    resp = model.generate_content(contents)
+    reply = resp.text or ""
     workflow = None
     if "```workflow" in reply:
         try:
