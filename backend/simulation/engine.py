@@ -1,55 +1,125 @@
-from __future__ import annotations
+"""
+Simulation engine — virtual sensors and devices.
+Runs in a background thread, ticks every 2s,
+updates state_store, pushes events for the execution engine.
+"""
+import threading, time, random, math
+from datetime import datetime
 
-import random
-import threading
-import time
-from queue import Queue
+_lock = threading.Lock()
 
+state_store = {
+    "sensor/motion":      {"value": False,  "unit": "bool",  "label": "Motion"},
+    "sensor/temperature": {"value": 22.0,   "unit": "C",     "label": "Temperature"},
+    "sensor/moisture":    {"value": 55.0,   "unit": "%",     "label": "Soil moisture"},
+    "sensor/door":        {"value": False,  "unit": "bool",  "label": "Door"},
+    "sensor/light_level": {"value": 400.0,  "unit": "lux",   "label": "Light level"},
+    "device/light":       {"value": False,  "unit": "bool",  "label": "Light",      "controllable": True},
+    "device/fan":         {"value": False,  "unit": "bool",  "label": "Fan",        "controllable": True},
+    "device/pump":        {"value": False,  "unit": "bool",  "label": "Pump",       "controllable": True},
+    "device/camera":      {"value": False,  "unit": "bool",  "label": "Camera",     "controllable": True},
+    "device/robot":       {"value": "idle", "unit": "state", "label": "Robot",      "controllable": True},
+}
 
-class SimulationEngine:
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._running = False
-        self._thread: threading.Thread | None = None
-        self.events: Queue[dict] = Queue()
-        self.state = {
-            "temperature": 24.0,
-            "humidity": 50.0,
-            "light_1": "off",
-            "fan_1": "off",
-            "robot_1": "idle",
-        }
+event_queue = []
+exec_log    = []
+notifications = []
 
-    def start(self):
-        if self._running:
-            return
-        self._running = True
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
+def get_state():
+    with _lock:
+        return {k: dict(v) for k, v in state_store.items()}
 
-    def stop(self):
-        self._running = False
-        if self._thread:
-            self._thread.join(timeout=1)
+def set_device(topic, value):
+    with _lock:
+        if topic in state_store:
+            state_store[topic]["value"] = value
+            state_store[topic]["updated_at"] = datetime.now().isoformat()
+            return True
+    return False
 
-    def snapshot(self):
-        with self._lock:
-            return dict(self.state)
+def push_event(topic, payload):
+    with _lock:
+        event_queue.append({"topic": topic, "payload": payload, "ts": datetime.now().isoformat()})
+        if len(event_queue) > 300:
+            event_queue.pop(0)
 
-    def set_device_state(self, device_id: str, value):
-        with self._lock:
-            self.state[device_id] = value
-        self.events.put({"type": "device_update", "device": device_id, "value": value})
+def drain_events():
+    with _lock:
+        evts = list(event_queue)
+        event_queue.clear()
+        return evts
 
-    def _loop(self):
-        while self._running:
-            with self._lock:
-                self.state["temperature"] = round(self.state["temperature"] + random.uniform(-0.3, 0.3), 2)
-                self.state["humidity"] = round(self.state["humidity"] + random.uniform(-0.5, 0.5), 2)
-                payload = {
-                    "type": "sensor_update",
-                    "temperature": self.state["temperature"],
-                    "humidity": self.state["humidity"],
-                }
-            self.events.put(payload)
-            time.sleep(1)
+def push_exec_log(workflow_name, action, status, detail=""):
+    with _lock:
+        exec_log.append({"ts": datetime.now().isoformat(), "workflow": workflow_name,
+                         "action": action, "status": status, "detail": detail})
+        if len(exec_log) > 300:
+            exec_log.pop(0)
+
+def get_exec_log():
+    with _lock:
+        return list(reversed(exec_log))
+
+def push_notification(msg):
+    with _lock:
+        notifications.append({"ts": datetime.now().isoformat(), "message": msg})
+        if len(notifications) > 50:
+            notifications.pop(0)
+
+def get_notifications():
+    with _lock:
+        return list(reversed(notifications))
+
+_tick = 0
+
+def _simulate():
+    global _tick
+    _tick += 1
+    t = _tick
+    with _lock:
+        old_temp = state_store["sensor/temperature"]["value"]
+        new_temp = round(26 + 8 * math.sin(t / 30), 1)
+        state_store["sensor/temperature"]["value"] = new_temp
+        if abs(new_temp - old_temp) > 0.5:
+            event_queue.append({"topic": "sensor/temperature", "payload": str(new_temp), "ts": datetime.now().isoformat()})
+
+        m = state_store["sensor/moisture"]["value"]
+        pump_on = state_store["device/pump"]["value"]
+        m = min(100.0, m + 3.0) if pump_on else max(10.0, m - random.uniform(0.3, 0.8))
+        state_store["sensor/moisture"]["value"] = round(m, 1)
+
+        lux = max(0, round(600 * math.sin(math.pi * ((t % 144) / 144)), 1))
+        state_store["sensor/light_level"]["value"] = lux
+
+        motion = (t % 23 == 0) or (random.random() < 0.04)
+        old_motion = state_store["sensor/motion"]["value"]
+        state_store["sensor/motion"]["value"] = motion
+        if motion and not old_motion:
+            event_queue.append({"topic": "sensor/motion", "payload": "detected", "ts": datetime.now().isoformat()})
+
+        if t % 41 == 0:
+            door = random.choice([True, False])
+            old_door = state_store["sensor/door"]["value"]
+            state_store["sensor/door"]["value"] = door
+            if door != old_door:
+                event_queue.append({"topic": "sensor/door", "payload": "open" if door else "closed", "ts": datetime.now().isoformat()})
+
+        while len(event_queue) > 300:
+            event_queue.pop(0)
+
+_running = False
+
+def start():
+    global _running
+    if _running:
+        return
+    _running = True
+    def loop():
+        while _running:
+            _simulate()
+            time.sleep(2)
+    threading.Thread(target=loop, daemon=True).start()
+
+def stop():
+    global _running
+    _running = False
