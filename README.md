@@ -1,4 +1,4 @@
-# OpenClaw AI Automation Platform
+# IoT Claw - AI Automation Platform
 
 An AI-assisted no-code automation platform for IoT and robotics workflows.
 
