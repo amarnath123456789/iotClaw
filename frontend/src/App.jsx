@@ -1,29 +1,45 @@
-import { useState } from 'react'
-import Sidebar from './components/Sidebar'
-import Chat from './components/Chat'
-import WorkflowList from './components/WorkflowList'
-import WorkflowEditor from './components/WorkflowEditor'
-import TemplateLibrary from './components/TemplateLibrary'
-import Dashboard from './components/Dashboard'
-
-const views = {
-  dashboard: Dashboard,
-  chat: Chat,
-  workflows: WorkflowList,
-  editor: WorkflowEditor,
-  templates: TemplateLibrary,
-}
+import React, { useState } from 'react'
+import Sidebar from './components/Sidebar.jsx'
+import Chat from './components/Chat.jsx'
+import WorkflowList from './components/WorkflowList.jsx'
+import WorkflowEditor from './components/WorkflowEditor.jsx'
+import Dashboard from './components/Dashboard.jsx'
 
 export default function App() {
-  const [activeView, setActiveView] = useState('dashboard')
-  const [mode, setMode] = useState('simulation')
-  const View = views[activeView] || Dashboard
+  const [mode, setMode] = useState('consumer')
+  const [view, setView] = useState('chat')
+  const [messagesByMode, setMessagesByMode] = useState({ consumer: [], maker: [], poweruser: [] })
+  const [wfView, setWfView]       = useState('list')
+  const [editingWf, setEditingWf] = useState(null)
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  function setMessages(msgs) {
+    setMessagesByMode(prev => ({ ...prev, [mode]: msgs }))
+  }
 
   return (
-    <div className="min-h-screen grid grid-cols-[260px_1fr]">
-      <Sidebar activeView={activeView} setActiveView={setActiveView} mode={mode} setMode={setMode} />
-      <main className="p-6">
-        <View mode={mode} />
+    <div className="flex h-screen overflow-hidden">
+      <Sidebar
+        mode={mode} setMode={setMode}
+        view={view} setView={v => { setView(v); if (v !== 'workflows') setWfView('list') }}
+        onClear={() => setMessagesByMode(prev => ({ ...prev, [mode]: [] }))}
+      />
+      <main className="flex-1 overflow-hidden">
+        {view === 'chat' && (
+          <Chat mode={mode} messages={messagesByMode[mode]} setMessages={setMessages}
+            onWorkflowSaved={() => setRefreshKey(k => k + 1)} />
+        )}
+        {view === 'workflows' && wfView === 'list' && (
+          <WorkflowList refreshKey={refreshKey}
+            onEdit={wf => { setEditingWf(wf); setWfView('editor') }}
+            onNew={() => { setEditingWf(null); setWfView('editor') }} />
+        )}
+        {view === 'workflows' && wfView === 'editor' && (
+          <WorkflowEditor initial={editingWf}
+            onSaved={() => { setRefreshKey(k => k + 1); setWfView('list'); setEditingWf(null) }}
+            onCancel={() => setWfView('list')} />
+        )}
+        {view === 'dashboard' && <Dashboard />}
       </main>
     </div>
   )

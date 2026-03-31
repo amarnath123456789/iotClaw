@@ -1,30 +1,22 @@
-const API_BASE = 'http://localhost:8000'
+const BASE = 'http://localhost:8000'
 
-export async function getState() {
-  const res = await fetch(`${API_BASE}/state`)
-  return res.json()
-}
-
-export async function getWorkflows() {
-  const res = await fetch(`${API_BASE}/workflows`)
-  return res.json()
-}
-
-export async function createWorkflow(payload) {
-  const res = await fetch(`${API_BASE}/workflows`, {
-    method: 'POST',
+async function req(method, path, body) {
+  const res = await fetch(BASE + path, {
+    method,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: body ? JSON.stringify(body) : undefined,
   })
+  if (!res.ok) throw new Error(`${method} ${path} → ${res.status}`)
   return res.json()
 }
 
-export async function runWorkflow(id) {
-  const res = await fetch(`${API_BASE}/workflows/${id}/run`, { method: 'POST' })
-  return res.json()
-}
-
-export async function deleteWorkflow(id) {
-  const res = await fetch(`${API_BASE}/workflows/${id}`, { method: 'DELETE' })
-  return res.json()
+export const api = {
+  chat:              (messages, mode) => req('POST', '/chat', { messages, mode }),
+  listWorkflows:     ()               => req('GET',  '/workflows'),
+  createWorkflow:    (data)           => req('POST', '/workflows', data),
+  getWorkflow:       (id)             => req('GET',  `/workflows/${id}`),
+  updateWorkflow:    (id, data)       => req('PUT',  `/workflows/${id}`, data),
+  deleteWorkflow:    (id)             => req('DELETE',`/workflows/${id}`),
+  toggleWorkflow:    (id)             => req('PATCH', `/workflows/${id}/toggle`),
+  getAudit:          ()               => req('GET',  '/audit'),
 }
