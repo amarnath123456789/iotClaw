@@ -9,6 +9,9 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+_legacy_started = False
+
+
 class ExecutionEngine:
     def __init__(self, db_path, sim_engine, mqtt_broker, state_manager):
         self._db_path = db_path
@@ -206,3 +209,18 @@ class ExecutionEngine:
             conn.close()
         except Exception as e:
             logger.error(f"[ENG] Audit failed: {e}")
+
+
+def start(get_conn=None):
+    """Backward-compatible entrypoint expected by backend/main.py."""
+    global _legacy_started
+    if _legacy_started:
+        return
+    _legacy_started = True
+    logger.info("[ENG] Legacy execution engine start() initialized")
+
+
+def stop():
+    """Backward-compatible stop entrypoint."""
+    global _legacy_started
+    _legacy_started = False
